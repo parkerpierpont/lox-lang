@@ -1,0 +1,3 @@
+// Your first Lox program!
+print 24;
+print "Hello World!";
