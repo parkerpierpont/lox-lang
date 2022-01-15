@@ -26,7 +26,7 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(&mut self) {
+    pub fn scan_tokens(mut self) -> Vec<Token> {
         while !self.is_at_end() {
             // We are at the beginning of the next lexeme.
             self.start = self.current;
@@ -39,6 +39,8 @@ impl Scanner {
             TokenLiteral::None,
             self.line,
         ));
+
+        self.tokens()
     }
 
     fn scan_token(&mut self) {
@@ -233,7 +235,7 @@ impl Scanner {
 
     // Adds a new token to our tokens list (without an associated literal)
     fn add_etoken(&mut self, ty: impl Into<TokenType>) {
-        self.add_token(ty, "".to_string());
+        self.add_token(ty, TokenLiteral::None);
     }
 
     // Adds a new token to our tokens list
@@ -245,7 +247,7 @@ impl Scanner {
 
     // Whether we've consumed all of the characters or not.
     fn is_at_end(&self) -> bool {
-        self.current >= self.source.char_length()
+        self.current > self.source.char_length()
     }
 
     // If the identifier passed in has the value as a reserved word, then we
@@ -273,7 +275,7 @@ impl Scanner {
     }
 
     /// Consumes self and returns a list of tokens.
-    pub fn tokens(self) -> Vec<Token> {
+    fn tokens(self) -> Vec<Token> {
         self.tokens
     }
 }

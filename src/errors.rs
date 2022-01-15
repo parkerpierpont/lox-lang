@@ -63,7 +63,7 @@ impl ErrorManager {
     }
 
     fn display_error(line: usize, _where: String, message: String) {
-        println!("[line {:?}] Error{:?}: {:?}", line, _where, message);
+        println!("[line {}] Error {}: {}", line, _where, message);
     }
 
     pub fn reset_had_errors(&self) {

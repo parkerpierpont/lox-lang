@@ -4,6 +4,8 @@ use crate::token_type::TokenType;
 pub enum TokenLiteral {
     String(String),
     Number(f64),
+    False,
+    True,
     None,
 }
 
@@ -11,8 +13,10 @@ impl ToString for TokenLiteral {
     fn to_string(&self) -> String {
         match self {
             TokenLiteral::None => "None".to_string(),
-            TokenLiteral::String(v) => "String(".to_string() + v.as_str() + ")",
-            TokenLiteral::Number(v) => "Number(".to_string() + v.to_string().as_str() + ")",
+            TokenLiteral::String(v) => v.clone(),
+            TokenLiteral::Number(v) => v.to_string(),
+            TokenLiteral::False => "False".to_string(),
+            TokenLiteral::True => "True".to_string(),
         }
     }
 }
@@ -31,10 +35,10 @@ impl Into<TokenLiteral> for f64 {
 
 #[derive(Debug, Clone)]
 pub struct Token {
-    ty: TokenType,
-    lexeme: String,
-    literal: TokenLiteral,
-    line: usize,
+    pub ty: TokenType,
+    pub lexeme: String,
+    pub literal: TokenLiteral,
+    pub line: usize,
 }
 
 impl Token {

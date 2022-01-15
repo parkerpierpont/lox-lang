@@ -1,3 +1,4 @@
 // Your first Lox program!
-print 24;
-print "Hello World!";
+// print 24;
+// print "Hello World!";
+1 + (-234 * 3) / 24
