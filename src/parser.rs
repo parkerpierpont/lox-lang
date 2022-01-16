@@ -1,14 +1,13 @@
-use std::rc::Rc;
-
 use crate::{
     errors,
-    expr::{Binary, Expression, Grouping, Literal, Unary},
+    expr::{Assign, Binary, Expression, Grouping, Literal, Unary, Variable},
+    stmt::{BlockStmt, ExprStmt, PrintStmt, Statement, VariableStmt},
     token::{Token, TokenLiteral},
     token_type::TokenType,
 };
 
 #[derive(Debug)]
-struct ParseError;
+pub struct ParseError;
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -20,18 +19,172 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Option<Expression> {
-        if let Ok(expr) = self.expression() {
-            Some(expr)
+    pub fn parse(&mut self) -> Vec<Statement> {
+        let mut statements = Vec::new();
+        while !self.is_at_end() {
+            match self.declaration() {
+                Some(decl) => {
+                    statements.push(decl);
+                }
+                // When we run into a parse error, we don't return anything.
+                // Instead, we call synchronize() to try to recover.
+                None => {}
+            }
+        }
+
+        statements
+    }
+
+    // Parse an expression
+    fn expression(&mut self) -> Result<Expression, ParseError> {
+        self.assignment()
+    }
+
+    // Parse a declaration, and try to recover if possible using synchronize in
+    // the case that we have a ParseError.
+    fn declaration(&mut self) -> Option<Statement> {
+        let result = if self.matches(&[TokenType::Var]) {
+            self.var_declaration()
         } else {
-            None
+            self.statement()
+        };
+
+        match result {
+            // Parsing succeeded
+            Ok(statement) => Some(statement),
+            Err(_parse_error) => {
+                self.synchronize();
+                None
+            }
         }
     }
 
-    // Basically equality with extra steps
-    fn expression(&mut self) -> Result<Expression, ParseError> {
-        let expr = self.equality();
-        expr
+    // Parse a variable declaration statement.
+    fn var_declaration(&mut self) -> Result<Statement, ParseError> {
+        let name = match self.consume(TokenType::Identifier, "Expect variable name.") {
+            Ok(name) => name,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        // An initializer statement is optional.
+        let mut initializer = None;
+        if self.matches(&[TokenType::Equal]) {
+            match self.expression() {
+                Ok(expr) => {
+                    initializer = Some(expr);
+                }
+                Err(parse_error) => return Err(parse_error),
+            };
+        }
+
+        if let Err(parse_error) = self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        ) {
+            return Err(parse_error);
+        }
+
+        Ok(VariableStmt::new(name, initializer))
+    }
+
+    // Parse a statement
+    fn statement(&mut self) -> Result<Statement, ParseError> {
+        if self.matches(&[TokenType::Print]) {
+            return self.print_statement();
+        }
+        if self.matches(&[TokenType::LeftBrace]) {
+            return match self.block() {
+                Ok(statements) => Ok(BlockStmt::new(statements)),
+                Err(parse_error) => Err(parse_error),
+            };
+        }
+
+        self.expression_statement()
+    }
+
+    // Parse a print statement
+    fn print_statement(&mut self) -> Result<Statement, ParseError> {
+        let value = self.expression();
+        let consume_semi = self.consume(TokenType::Semicolon, "Expect ';' after value.");
+        match (value, consume_semi) {
+            // Continue with no error
+            (Ok(value), Ok(_)) => Ok(PrintStmt::new(value)),
+            // Take the semi error
+            (Ok(_), Err(err))
+            // Take the value error
+            | (Err(err), Ok(_))
+            // Take the value error
+            | (Err(err), Err(_)) => Err(err),
+        }
+    }
+
+    fn expression_statement(&mut self) -> Result<Statement, ParseError> {
+        let expr = self.expression();
+        let consume_semi = self.consume(TokenType::Semicolon, "Expect ';' after value.");
+        match (expr, consume_semi) {
+            // Continue with no error
+            (Ok(expr), Ok(_)) => Ok(ExprStmt::new(expr)),
+            // Take the semi error
+            (Ok(_), Err(err))
+            // Take the value error
+            | (Err(err), Ok(_))
+            // Take the value error
+            | (Err(err), Err(_)) => Err(err),
+        }
+    }
+
+    fn block(&mut self) -> Result<Vec<Statement>, ParseError> {
+        let mut statements = vec![];
+
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            if let Some(declaration) = self.declaration() {
+                statements.push(declaration);
+            }
+        }
+
+        if let Err(parse_error) = self.consume(TokenType::RightBrace, "Expect '}' after block.") {
+            return Err(parse_error);
+        }
+
+        Ok(statements)
+    }
+
+    // Parsing an assignment expression with only single-token lookahead.
+    fn assignment(&mut self) -> Result<Expression, ParseError> {
+        // Parse next expression (could be left-hand-side of an assignment)
+        let expr: Expression = match self.equality() {
+            Ok(expr) => expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        // If equals is the next token, 'expr' is the left-hand-side of an
+        // assignment.
+        if self.matches(&[TokenType::Equal]) {
+            // The assignment.
+            let equals = self.previous();
+            // For the assignment's right-hand expr (value), we need to recurse.
+            let value = match self.assignment() {
+                Ok(val) => val,
+                Err(parse_error) => return Err(parse_error),
+            };
+
+            // If the left-hand-side is indeed a variable, we can proceed.
+            //
+            // NOTE: Maybe we should check this earlier (like at the top
+            // if-statement?)
+            if expr.name() == "Variable" {
+                if let Ok(variable) = expr.downcast_rc::<Variable>() {
+                    return Ok(Assign::new(variable.name.clone(), value));
+                }
+            }
+
+            // Otherwise, bail out.
+            return Err(self.error(equals, "Invalid assignment target."));
+        }
+
+        // Return the equality expression if the next token isn't
+        // 'TokenType::Equal'.
+        Ok(expr)
     }
 
     // Translation of equality rule into syntax tree, if it never encounters an
@@ -121,6 +274,9 @@ impl Parser {
         }
         if self.matches(&[TokenType::Number, TokenType::String]) {
             return Ok(Literal::new(self.previous().literal));
+        }
+        if self.matches(&[TokenType::Identifier]) {
+            return Ok(Variable::new(self.previous()));
         }
         if self.matches(&[TokenType::LeftParen]) {
             // Try to end an expression. If we can't end it, we'll end up returning

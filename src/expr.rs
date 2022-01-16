@@ -1,33 +1,36 @@
 use std::{fmt::Debug, rc::Rc};
 
-use crate::token::{Token, TokenLiteral};
+use crate::{
+    shared_traits::Named,
+    token::{Token, TokenLiteral},
+};
 use downcast::{downcast, Any};
 
-pub trait NamedExpr {
-    fn name(&self) -> &'static str;
-}
+pub trait Expr: Any + Debug + Named {}
 
-pub trait Expr: Any + Debug + NamedExpr {}
-
-pub trait ExprVisitor<T: Default> {
+pub trait ExprVisitor<T> {
     fn visit_binary_expr(&self, expr: &Binary) -> T;
     fn visit_grouping_expr(&self, expr: &Grouping) -> T;
     fn visit_literal_expr(&self, expr: &Literal) -> T;
     fn visit_unary_expr(&self, expr: &Unary) -> T;
+    fn visit_variable_expr(&self, expr: &Variable) -> T;
+    fn visit_assign_expr(&self, expr: &Assign) -> T;
 }
 
 pub trait VisitorTarget {
-    fn accept<T: Default>(&self, visitor: impl ExprVisitor<T>) -> T;
+    fn accept<T>(&self, visitor: impl ExprVisitor<T>) -> T;
 }
 
 impl VisitorTarget for Rc<dyn Expr> {
-    fn accept<T: Default>(&self, visitor: impl ExprVisitor<T>) -> T {
+    fn accept<T>(&self, visitor: impl ExprVisitor<T>) -> T {
         match self.name() {
             "Binary" => visitor.visit_binary_expr(self.downcast_ref::<Binary>().unwrap()),
             "Grouping" => visitor.visit_grouping_expr(self.downcast_ref::<Grouping>().unwrap()),
             "Literal" => visitor.visit_literal_expr(self.downcast_ref::<Literal>().unwrap()),
             "Unary" => visitor.visit_unary_expr(self.downcast_ref::<Unary>().unwrap()),
-            _ => T::default(),
+            "Variable" => visitor.visit_variable_expr(self.downcast_ref::<Variable>().unwrap()),
+            "Assign" => visitor.visit_assign_expr(self.downcast_ref::<Assign>().unwrap()),
+            _ => unreachable!(),
         }
     }
 }
@@ -53,7 +56,7 @@ impl Binary {
     }
 }
 impl Expr for Binary {}
-impl NamedExpr for Binary {
+impl Named for Binary {
     fn name(&self) -> &'static str {
         "Binary"
     }
@@ -69,7 +72,7 @@ impl Grouping {
     }
 }
 impl Expr for Grouping {}
-impl NamedExpr for Grouping {
+impl Named for Grouping {
     fn name(&self) -> &'static str {
         "Grouping"
     }
@@ -85,7 +88,7 @@ impl Literal {
     }
 }
 impl Expr for Literal {}
-impl NamedExpr for Literal {
+impl Named for Literal {
     fn name(&self) -> &'static str {
         "Literal"
     }
@@ -101,10 +104,42 @@ impl Unary {
         Rc::new(Unary { operator, right })
     }
 }
-
 impl Expr for Unary {}
-impl NamedExpr for Unary {
+impl Named for Unary {
     fn name(&self) -> &'static str {
         "Unary"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Variable {
+    pub name: Token,
+}
+impl Variable {
+    pub fn new(name: Token) -> Expression {
+        Rc::new(Variable { name })
+    }
+}
+impl Expr for Variable {}
+impl Named for Variable {
+    fn name(&self) -> &'static str {
+        "Variable"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Assign {
+    pub name: Token,
+    pub value: Expression,
+}
+impl Assign {
+    pub fn new(name: Token, value: Expression) -> Expression {
+        Rc::new(Assign { name, value })
+    }
+}
+impl Expr for Assign {}
+impl Named for Assign {
+    fn name(&self) -> &'static str {
+        "Assign"
     }
 }

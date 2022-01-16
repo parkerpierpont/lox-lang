@@ -1,17 +1,21 @@
 #![feature(once_cell)]
+#![feature(box_into_inner)]
 mod ast_printer;
+mod environment;
 mod errors;
 mod expr;
-mod input_handler;
+mod interpreter;
+mod object;
 mod parser;
+mod runtime_error;
 mod scanner;
 mod shared_traits;
+mod stmt;
 mod token;
 mod token_type;
-use std::{env, fs, io::BufReader};
+use std::{env, fs, io};
 
-use ast_printer::AstPrinter;
-use expr::VisitorTarget;
+use interpreter::Interpreter;
 use parser::Parser;
 use scanner::Scanner;
 
@@ -31,28 +35,27 @@ fn run_file(file_path_str: &String) {
     let file = fs::read_to_string(file_path_str).unwrap();
     run(&file);
 
-    if errors::has_errors() {
+    if errors::has_errors() || errors::has_runtime_error() {
         errors::print_all();
-        std::process::exit(1);
+        let code = if errors::has_runtime_error() { 70 } else { 65 };
+        std::process::exit(code);
     }
 }
 
 fn run_prompt() {
     errors::initialize_immediate();
-    let input = std::io::stdin();
-    let mut input = input_handler::Input::new(BufReader::new(input.lock()));
-    let mut line = input.line().next();
-    while line.is_some() {
+    let mut line = get_user_input();
+    while line.is_ok() {
         let v = line.unwrap();
         match v.is_empty() {
             true => {
-                line = input.line().next();
+                line = get_user_input();
                 continue;
             }
             false => {
                 run(&v);
                 errors::reset_errors(); // don't want to crash our whole prompt
-                line = input.line().next();
+                line = get_user_input();
             }
         }
     }
@@ -60,13 +63,23 @@ fn run_prompt() {
 
 fn run(source: &String) {
     let scanner = Scanner::new(source);
+    let interpreter = Interpreter::new();
     let tokens = scanner.scan_tokens();
-    for token in &tokens {
-        println!("{:?}", token)
-    }
+    // for token in &tokens {
+    //     println!("{:?}", token)
+    // }
     let mut parser = Parser::new(tokens);
     // If we were able to parse without errors, print the expression.
-    if let Some(expression) = parser.parse() {
-        println!("Parser Result: \n{}", expression.accept(&AstPrinter));
+    let statements = parser.parse();
+    interpreter.interpret(statements);
+}
+
+fn get_user_input() -> io::Result<String> {
+    use std::io::{stdin, stdout, Write};
+    let mut s = String::new();
+    let _ = stdout().flush();
+    match stdin().read_line(&mut s) {
+        Ok(_) => Ok(s),
+        Err(error) => Err(error),
     }
 }

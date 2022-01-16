@@ -1,6 +1,8 @@
 use lazy_static::lazy_static;
 use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
+use crate::{runtime_error::RuntimeError, token::Token};
+
 #[derive(Debug, Clone)]
 
 struct Error {
@@ -14,6 +16,7 @@ struct ErrorManager {
     errors: Arc<RwLock<Vec<Error>>>,
     immediate: AtomicBool,
     had_errors: AtomicBool,
+    had_runtime_error: AtomicBool,
 }
 
 impl ErrorManager {
@@ -22,6 +25,7 @@ impl ErrorManager {
             errors: Arc::new(RwLock::new(Vec::new())),
             immediate: AtomicBool::new(false),
             had_errors: AtomicBool::new(false),
+            had_runtime_error: AtomicBool::new(false),
         }
     }
 
@@ -41,6 +45,26 @@ impl ErrorManager {
             writable.push(Error {
                 line,
                 _where: "".to_string(),
+                msg: message,
+            })
+        }
+    }
+
+    pub fn runtime_error(&self, token: Token, message: String) {
+        self.had_runtime_error
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if self.immediate.load(std::sync::atomic::Ordering::SeqCst) {
+            return Self::display_error(
+                token.line,
+                "RuntimeError(".to_string() + token.lexeme.as_str() + ")",
+                message,
+            );
+        }
+
+        if let Ok(mut writable) = self.errors.try_write() {
+            writable.push(Error {
+                line: token.line,
+                _where: "(".to_string() + token.lexeme.as_str() + ")",
                 msg: message,
             })
         }
@@ -68,7 +92,9 @@ impl ErrorManager {
 
     pub fn reset_had_errors(&self) {
         self.had_errors
-            .store(false, std::sync::atomic::Ordering::SeqCst)
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.had_runtime_error
+            .store(false, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn print_all(&self) {
@@ -103,6 +129,10 @@ pub fn error(line: usize, message: impl Into<String>) {
     ERROR_MANAGER.error(line, message.into());
 }
 
+pub fn runtime_error(error: RuntimeError) {
+    ERROR_MANAGER.runtime_error(error.token, error.message);
+}
+
 pub fn report(line: usize, _where: impl Into<String>, message: impl Into<String>) {
     ERROR_MANAGER.report(line, _where.into(), message.into());
 }
@@ -123,5 +153,11 @@ pub fn reset_errors() {
 pub fn has_errors() -> bool {
     ERROR_MANAGER
         .had_errors
+        .load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn has_runtime_error() -> bool {
+    ERROR_MANAGER
+        .had_runtime_error
         .load(std::sync::atomic::Ordering::SeqCst)
 }
