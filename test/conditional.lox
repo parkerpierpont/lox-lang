@@ -1,0 +1,3 @@
+// Conditional statements.
+print "hi" or 2; // "Hi"
+print nil or "yes"; // "yes"

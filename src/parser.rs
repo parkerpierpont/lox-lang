@@ -1,7 +1,7 @@
 use crate::{
     errors,
-    expr::{Assign, Binary, Expression, Grouping, Literal, Unary, Variable},
-    stmt::{BlockStmt, ExprStmt, PrintStmt, Statement, VariableStmt},
+    expr::{Assign, Binary, Expression, Grouping, Literal, Logical, Unary, Variable},
+    stmt::{BlockStmt, ExprStmt, IfStmt, PrintStmt, Statement, VariableStmt, WhileStmt},
     token::{Token, TokenLiteral},
     token_type::TokenType,
 };
@@ -87,10 +87,41 @@ impl Parser {
         Ok(VariableStmt::new(name, initializer))
     }
 
+    // Parse a while statement
+    fn while_statement(&mut self) -> Result<Statement, ParseError> {
+        match self.consume(TokenType::LeftParen, "Expect '(' after 'while'.") {
+            Err(parse_error) => return Err(parse_error),
+            _ => {}
+        };
+        let condition = match self.expression() {
+            Ok(cond_expr) => cond_expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+        match self.consume(TokenType::RightParen, "Expect ')' after condition.") {
+            Err(parse_error) => return Err(parse_error),
+            _ => {}
+        };
+        let body = match self.statement() {
+            Ok(body_stmt) => body_stmt,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        Ok(WhileStmt::new(condition, body))
+    }
+
     // Parse a statement
     fn statement(&mut self) -> Result<Statement, ParseError> {
+        if self.matches(&[TokenType::For]) {
+            return self.for_statement();
+        }
+        if self.matches(&[TokenType::If]) {
+            return self.if_statement();
+        }
         if self.matches(&[TokenType::Print]) {
             return self.print_statement();
+        }
+        if self.matches(&[TokenType::While]) {
+            return self.while_statement();
         }
         if self.matches(&[TokenType::LeftBrace]) {
             return match self.block() {
@@ -100,6 +131,121 @@ impl Parser {
         }
 
         self.expression_statement()
+    }
+
+    fn for_statement(&mut self) -> Result<Statement, ParseError> {
+        match self.consume(TokenType::LeftParen, "Expect '(' after 'for'.") {
+            Err(parse_error) => return Err(parse_error),
+            _ => {}
+        };
+
+        // The initializer – can be None, a Variable decl., or an expression.
+        let initializer = if self.matches(&[TokenType::Semicolon]) {
+            // Branch when the initializer has been omitted
+            None
+        } else if self.matches(&[TokenType::Var]) {
+            // Branch when the initializer is a variable declaration
+            match self.var_declaration() {
+                Ok(var_stmt) => Some(var_stmt),
+                Err(parse_error) => return Err(parse_error),
+            }
+        } else {
+            // Branch when the initializer is just a statement.
+            match self.expression_statement() {
+                Ok(expr_statement) => Some(expr_statement),
+                Err(parse_error) => return Err(parse_error),
+            }
+        };
+
+        let condition = match self.check(&TokenType::Semicolon) {
+            // If it's a semicolon, we have no condition.
+            true => None,
+            // If it's not a semicolon, we have a condition statement.
+            false => match self.expression() {
+                Ok(condition_expr) => Some(condition_expr),
+                Err(parse_error) => return Err(parse_error),
+            },
+        };
+
+        // Make sure a semicolon exists after the loop condition.
+        match self.consume(TokenType::Semicolon, "Expect ';' after loop condition.") {
+            Err(parse_error) => return Err(parse_error),
+            _ => {}
+        };
+
+        let increment = match self.check(&TokenType::RightParen) {
+            // If no right paren, we have an increment expression.
+            false => match self.expression() {
+                Ok(increment_expr) => Some(increment_expr),
+                Err(parse_error) => return Err(parse_error),
+            },
+            // If we have a right paren, we don't have an increment expression.
+            true => None,
+        };
+
+        // Make sure a right paren exists after the increment's position.
+        match self.consume(TokenType::RightParen, "Expect ')' after for clauses.") {
+            Err(parse_error) => return Err(parse_error),
+            _ => {}
+        };
+
+        let mut body = match self.statement() {
+            Ok(body_stmt) => body_stmt,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        //
+        // Desugaring process (into a while-loop)
+        //
+
+        // If we have a increment statement, it should execute after the body.
+        if let Some(increment) = increment {
+            body = BlockStmt::new(vec![body, ExprStmt::new(increment)])
+        };
+
+        // Set the body to a while statement. If no condition was specified, set
+        // the condition to 'True'.
+        if let Some(condition) = condition {
+            body = WhileStmt::new(condition, body);
+        } else {
+            body = WhileStmt::new(Literal::new(TokenLiteral::True), body);
+        };
+
+        // If we have an initializer, it should run once before the entire loop.
+        if let Some(initializer) = initializer {
+            body = BlockStmt::new(vec![initializer, body]);
+        }
+
+        Ok(body)
+    }
+
+    // Parse an 'if' statement
+    fn if_statement(&mut self) -> Result<Statement, ParseError> {
+        if let Err(parse_error) = self.consume(TokenType::LeftParen, "Expect '(' after 'if'.") {
+            return Err(parse_error);
+        }
+        let condition = match self.expression() {
+            Ok(expr) => expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+        if let Err(parse_error) =
+            self.consume(TokenType::RightParen, "Expect ')' after 'if' condition.")
+        {
+            return Err(parse_error);
+        }
+        let then_branch = match self.statement() {
+            Ok(stmt) => stmt,
+            Err(parse_error) => return Err(parse_error),
+        };
+        let else_branch = match self.matches(&[TokenType::Else]) {
+            true => match self.statement() {
+                Ok(stmt) => Some(stmt),
+                Err(parse_error) => return Err(parse_error),
+            },
+            false => None,
+        };
+
+        Ok(IfStmt::new(condition, then_branch, else_branch))
     }
 
     // Parse a print statement
@@ -152,8 +298,10 @@ impl Parser {
     // Parsing an assignment expression with only single-token lookahead.
     fn assignment(&mut self) -> Result<Expression, ParseError> {
         // Parse next expression (could be left-hand-side of an assignment)
-        let expr: Expression = match self.equality() {
+        let expr = match self.or() {
+            // Try to match equality
             Ok(expr) => expr,
+            // If equality doesn't work, try to parse short-circut
             Err(parse_error) => return Err(parse_error),
         };
 
@@ -184,6 +332,42 @@ impl Parser {
 
         // Return the equality expression if the next token isn't
         // 'TokenType::Equal'.
+        Ok(expr)
+    }
+
+    fn or(&mut self) -> Result<Expression, ParseError> {
+        let mut expr = match self.and() {
+            Ok(expr) => expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        while self.matches(&[TokenType::Or]) {
+            let operator = self.previous();
+            let right = match self.and() {
+                Ok(expr) => expr,
+                Err(parse_error) => return Err(parse_error),
+            };
+            expr = Logical::new(expr, operator, right);
+        }
+
+        Ok(expr)
+    }
+
+    fn and(&mut self) -> Result<Expression, ParseError> {
+        let mut expr = match self.equality() {
+            Ok(expr) => expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        while self.matches(&[TokenType::And]) {
+            let operator = self.previous();
+            let right = match self.equality() {
+                Ok(expr) => expr,
+                Err(parse_error) => return Err(parse_error),
+            };
+            expr = Logical::new(expr, operator, right);
+        }
+
         Ok(expr)
     }
 

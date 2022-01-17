@@ -195,6 +195,29 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
 
         return Ok(value);
     }
+
+    fn visit_logical_expr(&self, expr: &crate::expr::Logical) -> Result<LoxObject, RuntimeError> {
+        let left = match self.evaluate(&expr.left) {
+            Ok(obj) => obj,
+            Err(runtime_error) => return Err(runtime_error),
+        };
+
+        if expr.operator.ty == TokenType::Or {
+            // "OR" short circut – we know one of the values is truthy.
+            if left.is_truthy() {
+                return Ok(left);
+            }
+        } else {
+            // "AND" short_circuit - we know one of the values isn't truthy.
+            if !left.is_truthy() {
+                return Ok(left);
+            }
+        }
+
+        // If no short-circuit, we have to rely upon the final value of the
+        // right-side of the expression.
+        self.evaluate(&expr.right)
+    }
 }
 
 impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
@@ -238,6 +261,43 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
     fn visit_block_stmt(&self, stmt: &crate::stmt::BlockStmt) -> Result<(), RuntimeError> {
         if let Err(runtime_error) = self.execute_block(&stmt.statements) {
             return Err(runtime_error);
+        }
+
+        Ok(())
+    }
+
+    fn visit_if_stmt(&self, stmt: &crate::stmt::IfStmt) -> Result<(), RuntimeError> {
+        let condition = match self.evaluate(&stmt.condition) {
+            Ok(res) => res.is_truthy(),
+            Err(runtime_error) => return Err(runtime_error),
+        };
+
+        match condition {
+            true => match self.execute(stmt.then_branch.clone()) {
+                Err(runtime_error) => Err(runtime_error),
+                _ => Ok(()),
+            },
+            false => match stmt.else_branch.clone() {
+                Some(stmt) => match self.execute(stmt) {
+                    Err(runtime_error) => Err(runtime_error),
+                    _ => Ok(()),
+                },
+                None => Ok(()),
+            },
+        }
+    }
+
+    fn visit_while_stmt(&self, stmt: &crate::stmt::WhileStmt) -> Result<(), RuntimeError> {
+        while match self.evaluate(&stmt.condition) {
+            // This is our evaluation of conditional's truthiness
+            Ok(condition) => condition.is_truthy(),
+            // If we can't evaluate the truthiness of the condition, we'll return.
+            Err(runtime_error) => return Err(runtime_error),
+        } {
+            match self.execute(stmt.body.clone()) {
+                Err(runtime_error) => return Err(runtime_error),
+                _ => {}
+            }
         }
 
         Ok(())

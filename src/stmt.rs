@@ -10,6 +10,8 @@ pub trait StmtVisitor<T> {
     fn visit_print_stmt(&self, stmt: &PrintStmt) -> T;
     fn visit_variable_stmt(&self, stmt: &VariableStmt) -> T;
     fn visit_block_stmt(&self, stmt: &BlockStmt) -> T;
+    fn visit_if_stmt(&self, stmt: &IfStmt) -> T;
+    fn visit_while_stmt(&self, stmt: &WhileStmt) -> T;
 }
 
 pub trait StmtVisitorTarget {
@@ -20,9 +22,11 @@ impl StmtVisitorTarget for Rc<dyn Stmt> {
     fn accept<T>(&self, visitor: impl StmtVisitor<T>) -> T {
         match self.name() {
             "Expression" => visitor.visit_expression_stmt(self.downcast_ref::<ExprStmt>().unwrap()),
+            "If" => visitor.visit_if_stmt(self.downcast_ref::<IfStmt>().unwrap()),
             "Print" => visitor.visit_print_stmt(self.downcast_ref::<PrintStmt>().unwrap()),
             "Variable" => visitor.visit_variable_stmt(self.downcast_ref::<VariableStmt>().unwrap()),
             "Block" => visitor.visit_block_stmt(self.downcast_ref::<BlockStmt>().unwrap()),
+            "While" => visitor.visit_while_stmt(self.downcast_ref::<WhileStmt>().unwrap()),
             _ => unreachable!(),
         }
     }
@@ -98,5 +102,50 @@ impl Stmt for BlockStmt {}
 impl Named for BlockStmt {
     fn name(&self) -> &'static str {
         "Block"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IfStmt {
+    pub condition: Expression,
+    pub then_branch: Statement,
+    pub else_branch: Option<Statement>,
+}
+
+impl IfStmt {
+    pub fn new(
+        condition: Expression,
+        then_branch: Statement,
+        else_branch: Option<Statement>,
+    ) -> Statement {
+        Rc::new(IfStmt {
+            condition,
+            then_branch,
+            else_branch,
+        })
+    }
+}
+impl Stmt for IfStmt {}
+impl Named for IfStmt {
+    fn name(&self) -> &'static str {
+        "If"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WhileStmt {
+    pub condition: Expression,
+    pub body: Statement,
+}
+
+impl WhileStmt {
+    pub fn new(condition: Expression, body: Statement) -> Statement {
+        Rc::new(WhileStmt { condition, body })
+    }
+}
+impl Stmt for WhileStmt {}
+impl Named for WhileStmt {
+    fn name(&self) -> &'static str {
+        "While"
     }
 }

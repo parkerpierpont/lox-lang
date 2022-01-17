@@ -15,6 +15,7 @@ pub trait ExprVisitor<T> {
     fn visit_unary_expr(&self, expr: &Unary) -> T;
     fn visit_variable_expr(&self, expr: &Variable) -> T;
     fn visit_assign_expr(&self, expr: &Assign) -> T;
+    fn visit_logical_expr(&self, expr: &Logical) -> T;
 }
 
 pub trait VisitorTarget {
@@ -27,6 +28,7 @@ impl VisitorTarget for Rc<dyn Expr> {
             "Binary" => visitor.visit_binary_expr(self.downcast_ref::<Binary>().unwrap()),
             "Grouping" => visitor.visit_grouping_expr(self.downcast_ref::<Grouping>().unwrap()),
             "Literal" => visitor.visit_literal_expr(self.downcast_ref::<Literal>().unwrap()),
+            "Logical" => visitor.visit_logical_expr(self.downcast_ref::<Logical>().unwrap()),
             "Unary" => visitor.visit_unary_expr(self.downcast_ref::<Unary>().unwrap()),
             "Variable" => visitor.visit_variable_expr(self.downcast_ref::<Variable>().unwrap()),
             "Assign" => visitor.visit_assign_expr(self.downcast_ref::<Assign>().unwrap()),
@@ -141,5 +143,27 @@ impl Expr for Assign {}
 impl Named for Assign {
     fn name(&self) -> &'static str {
         "Assign"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Logical {
+    pub left: Expression,
+    pub operator: Token,
+    pub right: Expression,
+}
+impl Logical {
+    pub fn new(left: Expression, operator: Token, right: Expression) -> Expression {
+        Rc::new(Logical {
+            left,
+            operator,
+            right,
+        })
+    }
+}
+impl Expr for Logical {}
+impl Named for Logical {
+    fn name(&self) -> &'static str {
+        "Logical"
     }
 }

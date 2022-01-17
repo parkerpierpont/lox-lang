@@ -1,0 +1,10 @@
+// Conditional statements.
+//
+// Should return 'Then statement executed!'
+//
+var expr_val = true;
+if (expr_val) {
+    print "Then statement executed!";
+} else {
+    print "Else statement executed!";
+}

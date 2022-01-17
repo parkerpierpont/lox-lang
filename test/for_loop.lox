@@ -1,0 +1,27 @@
+//
+// While Loop Test
+//
+var i = 0;
+var val = 0;
+
+while (i < 10) {
+    val = i + val;
+    i = i + 1;
+}
+
+if (val == 45) {
+    print "While loop works!";
+}
+
+//
+// For Loop Test
+//
+var fval = 0; // Reset the value
+
+for (var i = 0; i < 10; i = i + 1) {
+    fval = i + fval;
+}
+
+if (fval == 45) {
+    print "For loop works!";
+}
