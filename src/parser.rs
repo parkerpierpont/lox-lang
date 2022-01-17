@@ -1,7 +1,7 @@
 use crate::{
     errors,
-    expr::{Assign, Binary, Expression, Grouping, Literal, Logical, Unary, Variable},
-    stmt::{BlockStmt, ExprStmt, IfStmt, PrintStmt, Statement, VariableStmt, WhileStmt},
+    expr::{Assign, Binary, Call, Expression, Grouping, Literal, Logical, Unary, Variable},
+    stmt::{BlockStmt, ExprStmt, FunStmt, IfStmt, PrintStmt, Statement, VariableStmt, WhileStmt},
     token::{Token, TokenLiteral},
     token_type::TokenType,
 };
@@ -43,7 +43,9 @@ impl Parser {
     // Parse a declaration, and try to recover if possible using synchronize in
     // the case that we have a ParseError.
     fn declaration(&mut self) -> Option<Statement> {
-        let result = if self.matches(&[TokenType::Var]) {
+        let result = if self.matches(&[TokenType::Fun]) {
+            self.function("function")
+        } else if self.matches(&[TokenType::Var]) {
             self.var_declaration()
         } else {
             self.statement()
@@ -279,6 +281,58 @@ impl Parser {
         }
     }
 
+    fn function(&mut self, kind: impl Into<String>) -> Result<Statement, ParseError> {
+        let kind: String = kind.into();
+        let name = match self.consume(TokenType::Identifier, format!("Expect {} name.", kind)) {
+            Ok(ident_token) => ident_token,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        if let Err(parse_error) = self.consume(
+            TokenType::LeftParen,
+            format!("Expect '(' after {} name.", kind),
+        ) {
+            return Err(parse_error);
+        }
+
+        let mut parameters = vec![];
+        if !self.check(&TokenType::RightParen) {
+            if parameters.len() >= 255 {
+                let next_token = self.peek();
+                return Err(self.error(next_token, "Can't have more than 255 parameters."));
+            }
+
+            loop {
+                match self.consume(TokenType::Identifier, "Expect parameter name.") {
+                    Ok(param) => parameters.push(param),
+                    Err(parse_error) => return Err(parse_error),
+                }
+
+                if !self.matches(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        if let Err(parse_error) =
+            self.consume(TokenType::RightParen, "Expect ')' after parameters.")
+        {
+            return Err(parse_error);
+        }
+
+        if let Err(parse_error) = self.consume(
+            TokenType::LeftBrace,
+            format!("Expect '{}' before {} body.", "{", kind),
+        ) {
+            return Err(parse_error);
+        }
+
+        match self.block() {
+            Ok(body) => Ok(FunStmt::new(name, parameters, body)),
+            Err(parse_error) => return Err(parse_error),
+        }
+    }
+
     fn block(&mut self) -> Result<Vec<Statement>, ParseError> {
         let mut statements = vec![];
 
@@ -442,7 +496,58 @@ impl Parser {
             }
         }
 
-        self.primary()
+        self.call()
+    }
+
+    // Parsing an arguments list between parens, with zero-or-more arguments.
+    fn finish_call(&mut self, callee: Expression) -> Result<Expression, ParseError> {
+        let mut arguments = vec![];
+
+        // If we have a right paren, this is never run (zero-argument fn).
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                // If we don't have a right-paren, we expect at least one argument.
+                match self.expression() {
+                    Ok(expr) => arguments.push(expr),
+                    Err(parse_error) => return Err(parse_error),
+                };
+
+                // If we don't match a comma being right after the argument
+                // expression, we are done parsing the arguments list.
+                if !self.matches(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+
+        match self.consume(TokenType::RightParen, "Expect ')' after arguments.") {
+            // If we have a right-paren, we can returna new Call expression.
+            Ok(paren) => Ok(Call::new(callee, paren, arguments)),
+            // Otherwise we have to return a ParseError.
+            Err(parse_error) => return Err(parse_error),
+        }
+    }
+
+    fn call(&mut self) -> Result<Expression, ParseError> {
+        let mut expr = match self.primary() {
+            Ok(primary_expr) => primary_expr,
+            Err(parse_error) => return Err(parse_error),
+        };
+
+        loop {
+            if self.matches(&[TokenType::LeftParen]) {
+                match self.finish_call(expr) {
+                    Ok(finish_call_expr) => {
+                        expr = finish_call_expr;
+                    }
+                    Err(parse_error) => return Err(parse_error),
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(expr)
     }
 
     // Primary Expressions (highest level of precedence)

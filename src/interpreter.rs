@@ -1,6 +1,7 @@
 use crate::environment::EnvironmentManager;
 use crate::errors;
 use crate::expr::{Expr, ExprVisitor, VisitorTarget};
+use crate::function::{LoxFunction, LoxNativeCallable};
 use crate::object::{LoxBoolean, LoxNil, LoxNumber, LoxObject, LoxString};
 use crate::runtime_error::RuntimeError;
 use crate::stmt::{Statement, StmtVisitor, StmtVisitorTarget};
@@ -9,14 +10,19 @@ use crate::token_type::TokenType;
 use std::rc::Rc;
 
 pub struct Interpreter {
-    environment: EnvironmentManager,
+    pub environment: EnvironmentManager,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
-        Self {
-            environment: EnvironmentManager::new(),
-        }
+        let environment = EnvironmentManager::new();
+        // Add native clock function
+        environment.define(
+            &"clock".to_string(),
+            LoxNativeCallable::new(0, native_clock),
+        );
+
+        Self { environment }
     }
 
     pub fn interpret(&self, statements: Vec<Statement>) {
@@ -31,11 +37,11 @@ impl Interpreter {
         }
     }
 
-    fn execute(&self, stmt: Statement) -> Result<(), RuntimeError> {
+    pub fn execute(&self, stmt: Statement) -> Result<(), RuntimeError> {
         stmt.accept(self)
     }
 
-    fn execute_block(&self, statements: &Vec<Statement>) -> Result<(), RuntimeError> {
+    pub fn execute_block(&self, statements: &Vec<Statement>) -> Result<(), RuntimeError> {
         self.environment.enter_new_scope();
 
         for statement in statements {
@@ -50,11 +56,11 @@ impl Interpreter {
     }
 
     // Sends the expression back through the visitor implementation
-    fn evaluate(&self, expr: &Rc<dyn Expr>) -> Result<LoxObject, RuntimeError> {
+    pub fn evaluate(&self, expr: &Rc<dyn Expr>) -> Result<LoxObject, RuntimeError> {
         expr.accept(self)
     }
 
-    fn check_number_operand<'a>(
+    pub fn check_number_operand<'a>(
         &self,
         operator: &Token,
         operand: &'a LoxObject,
@@ -69,7 +75,7 @@ impl Interpreter {
         }
     }
 
-    fn check_number_operands<'a, 'b>(
+    pub fn check_number_operands<'a, 'b>(
         &self,
         operator: &Token,
         operand_a: &'a LoxObject,
@@ -218,6 +224,43 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
         // right-side of the expression.
         self.evaluate(&expr.right)
     }
+
+    fn visit_call_expr(&self, expr: &crate::expr::Call) -> Result<LoxObject, RuntimeError> {
+        let callee = match self.evaluate(&expr.callee) {
+            Ok(callee_obj) => callee_obj,
+            Err(runtime_error) => return Err(runtime_error),
+        };
+
+        let mut arguments = vec![];
+        for argument in &expr.arguments {
+            match self.evaluate(&argument) {
+                Ok(argument_obj) => arguments.push(argument_obj),
+                Err(runtime_error) => return Err(runtime_error),
+            };
+        }
+
+        if !callee.is_callable() {
+            return Err(RuntimeError::new(
+                expr.paren.clone(),
+                "Can only call functions and classes.",
+            ));
+        }
+
+        let function = callee;
+
+        if arguments.len() != function.arity() {
+            return Err(RuntimeError::new(
+                expr.paren.clone(),
+                format!(
+                    "Expected {} arguments but got {}.",
+                    function.arity(),
+                    arguments.len()
+                ),
+            ));
+        }
+
+        function.call(&self, arguments)
+    }
 }
 
 impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
@@ -302,4 +345,23 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
 
         Ok(())
     }
+
+    fn visit_fun_stmt(&self, stmt: &crate::stmt::FunStmt) -> Result<(), RuntimeError> {
+        let function = LoxFunction::new(stmt);
+        self.environment.define(&stmt.name.lexeme, function);
+        Ok(())
+    }
+}
+
+/// Native Clock Function
+fn native_clock(
+    _interpreter: &Interpreter,
+    _args: Vec<LoxObject>,
+) -> Result<LoxObject, RuntimeError> {
+    Ok(LoxNumber::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64(),
+    ))
 }

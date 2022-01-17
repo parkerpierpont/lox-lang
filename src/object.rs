@@ -2,15 +2,32 @@ use std::{rc::Rc, sync::RwLock};
 
 use downcast::{downcast, Any};
 
+use crate::{
+    function::{LoxFunction, LoxNativeCallable},
+    interpreter::Interpreter,
+    runtime_error::RuntimeError,
+};
+
 pub trait LoxObjectBase: Any + PrimitiveLoxObject {}
 pub trait PrimitiveLoxObject {
     fn instance_name(&self) -> &'static str;
 }
 
+pub trait CallableLoxObject: Any + LoxObjectBase {
+    fn arity_self(&self) -> usize;
+
+    fn call_self(
+        &self,
+        interpreter: &Interpreter,
+        arguments: Vec<LoxObject>,
+    ) -> Result<LoxObject, RuntimeError>;
+}
+
 downcast!(dyn LoxObjectBase);
+downcast!(dyn CallableLoxObject);
 
 #[derive(Clone)]
-pub struct LoxObject(Rc<RwLock<dyn LoxObjectBase>>);
+pub struct LoxObject(pub Rc<RwLock<dyn LoxObjectBase>>);
 
 impl LoxObject {
     pub fn instance_name(&self) -> &'static str {
@@ -62,6 +79,76 @@ impl LoxObject {
             "Number" => format!("{:.2}", self.get_number()),
             "String" => self.get_string(),
             "Boolean" => (if self.get_boolean() { "true" } else { "false" }).to_string(),
+            "NativeCallable" => "<native fn>".to_string(),
+            "Function" => {
+                if let Ok(fun_obj) = self.0.try_read() {
+                    if let Ok(fun_obj) = fun_obj.downcast_ref::<LoxFunction>() {
+                        return format!("<fn {}>", fun_obj.declaration.name.lexeme);
+                    }
+                }
+
+                "<function>".to_string()
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn is_callable(&self) -> bool {
+        match self.instance_name() {
+            "NativeCallable" => true,
+            "Function" => true,
+            _ => false,
+        }
+    }
+
+    pub fn arity(&self) -> usize {
+        match self.instance_name() {
+            "NativeCallable" => {
+                if let Ok(val) = self.0.try_read() {
+                    if let Ok(r) = val.downcast_ref::<LoxNativeCallable>() {
+                        return r.arity_self();
+                    }
+                }
+
+                0
+            }
+            "Function" => {
+                if let Ok(val) = self.0.try_read() {
+                    if let Ok(r) = val.downcast_ref::<LoxFunction>() {
+                        return r.arity_self();
+                    }
+                }
+
+                0
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn call(
+        &self,
+        interpreter: &Interpreter,
+        arguments: Vec<LoxObject>,
+    ) -> Result<LoxObject, RuntimeError> {
+        match self.instance_name() {
+            "NativeCallable" => {
+                if let Ok(val) = self.0.try_read() {
+                    if let Ok(r) = val.downcast_ref::<LoxNativeCallable>() {
+                        return r.call_self(interpreter, arguments);
+                    }
+                }
+
+                Ok(LoxNil::new())
+            }
+            "Function" => {
+                if let Ok(val) = self.0.try_read() {
+                    if let Ok(r) = val.downcast_ref::<LoxFunction>() {
+                        return r.call_self(interpreter, arguments);
+                    }
+                }
+
+                Ok(LoxNil::new())
+            }
             _ => unreachable!(),
         }
     }

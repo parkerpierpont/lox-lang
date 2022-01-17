@@ -8,11 +8,12 @@ pub trait EnvironmentTrait: Any {
     fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), RuntimeError>;
     fn is_global(&self) -> bool;
     fn take_enclosing_scope(self) -> Option<Box<EnvironmentBase>>;
+    fn parent_environment(&self) -> Option<&Environment>;
 }
 
 pub struct EnvironmentBase {
-    values: HashMap<String, LoxObject>,
-    enclosing: Option<Environment>,
+    pub values: HashMap<String, LoxObject>,
+    pub enclosing: Option<Environment>,
 }
 
 downcast!(dyn EnvironmentTrait);
@@ -23,6 +24,14 @@ impl EnvironmentBase {
     pub fn new_global() -> EnvironmentBase {
         Self {
             values: HashMap::new(),
+            enclosing: None,
+        }
+    }
+
+    /// Create a new environment.
+    pub fn new_global_from_hashmap(vals: HashMap<String, LoxObject>) -> EnvironmentBase {
+        Self {
+            values: vals.clone(),
             enclosing: None,
         }
     }
@@ -105,11 +114,15 @@ impl EnvironmentTrait for EnvironmentBase {
         }
         None
     }
+
+    fn parent_environment(&self) -> Option<&Environment> {
+        self.enclosing.as_ref()
+    }
 }
 
 pub struct EnvironmentManager {
     // previous_environment: Rc<RwLock<Option<Environment>>>,
-    current_environment: Rc<RwLock<Option<EnvironmentBase>>>,
+    pub current_environment: Rc<RwLock<Option<EnvironmentBase>>>,
 }
 
 impl EnvironmentManager {
@@ -119,6 +132,34 @@ impl EnvironmentManager {
             // previous_environment: Rc::new(RwLock::new(None)),
             current_environment: Rc::new(RwLock::new(Some(EnvironmentBase::new_global()))),
         }
+    }
+
+    fn new_from_existing(environment_tree: &EnvironmentBase) -> Self {
+        Self {
+            // previous_environment: Rc::new(RwLock::new(None)),
+            current_environment: Rc::new(RwLock::new(Some(
+                EnvironmentBase::new_global_from_hashmap(environment_tree.values.clone()),
+            ))),
+        }
+    }
+
+    /// Returns the existing scope, and replaces it with `new_scope`.
+    pub fn replace_scope(&self, new_scope: EnvironmentBase) -> EnvironmentBase {
+        if let Ok(mut current) = self.current_environment.try_write() {
+            let old_env = current.take().unwrap();
+            current.replace(new_scope);
+            return old_env;
+        }
+
+        panic!("Unable to replace current scope.")
+    }
+
+    pub fn into_env_base(self) -> EnvironmentBase {
+        if let Ok(mut current) = self.current_environment.try_write() {
+            return current.take().unwrap();
+        }
+
+        panic!("Unable to take current environment base.")
     }
 
     pub fn enter_new_scope(&self) {
@@ -168,6 +209,24 @@ impl EnvironmentManager {
             name.clone(),
             format!("[internal] Unable to assign '{}'.", name.lexeme),
         ))
+    }
+
+    pub fn new_from_globals(&self) -> EnvironmentManager {
+        if let Ok(environment) = self.current_environment.try_read() {
+            let mut parent_env = environment.as_ref().unwrap();
+            let mut has_parent = parent_env.parent_environment();
+            while has_parent.is_some() {
+                parent_env = has_parent
+                    .unwrap()
+                    .downcast_ref::<EnvironmentBase>()
+                    .unwrap();
+                has_parent = parent_env.parent_environment();
+            }
+
+            return Self::new_from_existing(&parent_env);
+        }
+
+        panic!("Unable to get global environment.")
     }
 
     // fn is_global(&self) -> bool {

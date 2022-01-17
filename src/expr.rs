@@ -16,6 +16,7 @@ pub trait ExprVisitor<T> {
     fn visit_variable_expr(&self, expr: &Variable) -> T;
     fn visit_assign_expr(&self, expr: &Assign) -> T;
     fn visit_logical_expr(&self, expr: &Logical) -> T;
+    fn visit_call_expr(&self, expr: &Call) -> T;
 }
 
 pub trait VisitorTarget {
@@ -32,6 +33,7 @@ impl VisitorTarget for Rc<dyn Expr> {
             "Unary" => visitor.visit_unary_expr(self.downcast_ref::<Unary>().unwrap()),
             "Variable" => visitor.visit_variable_expr(self.downcast_ref::<Variable>().unwrap()),
             "Assign" => visitor.visit_assign_expr(self.downcast_ref::<Assign>().unwrap()),
+            "Call" => visitor.visit_call_expr(self.downcast_ref::<Call>().unwrap()),
             _ => unreachable!(),
         }
     }
@@ -165,5 +167,28 @@ impl Expr for Logical {}
 impl Named for Logical {
     fn name(&self) -> &'static str {
         "Logical"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Call {
+    pub callee: Expression,
+    pub paren: Token,
+    pub arguments: Vec<Expression>,
+}
+
+impl Call {
+    pub fn new(callee: Expression, paren: Token, arguments: Vec<Expression>) -> Expression {
+        Rc::new(Call {
+            callee,
+            paren,
+            arguments,
+        })
+    }
+}
+impl Expr for Call {}
+impl Named for Call {
+    fn name(&self) -> &'static str {
+        "Call"
     }
 }
