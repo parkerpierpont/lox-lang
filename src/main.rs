@@ -3,12 +3,12 @@
 mod ast_printer;
 mod environment;
 mod errors;
+mod exceptions;
 mod expr;
 mod function;
 mod interpreter;
 mod object;
 mod parser;
-mod runtime_error;
 mod scanner;
 mod shared_traits;
 mod stmt;

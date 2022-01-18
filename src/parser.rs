@@ -1,7 +1,11 @@
 use crate::{
     errors,
     expr::{Assign, Binary, Call, Expression, Grouping, Literal, Logical, Unary, Variable},
-    stmt::{BlockStmt, ExprStmt, FunStmt, IfStmt, PrintStmt, Statement, VariableStmt, WhileStmt},
+    object::LoxNil,
+    stmt::{
+        BlockStmt, ExprStmt, FunStmt, IfStmt, PrintStmt, ReturnStmt, Statement, VariableStmt,
+        WhileStmt,
+    },
     token::{Token, TokenLiteral},
     token_type::TokenType,
 };
@@ -121,6 +125,9 @@ impl Parser {
         }
         if self.matches(&[TokenType::Print]) {
             return self.print_statement();
+        }
+        if self.matches(&[TokenType::Return]) {
+            return self.return_statement();
         }
         if self.matches(&[TokenType::While]) {
             return self.while_statement();
@@ -263,6 +270,27 @@ impl Parser {
             | (Err(err), Ok(_))
             // Take the value error
             | (Err(err), Err(_)) => Err(err),
+        }
+    }
+
+    // Parse a return statement
+    fn return_statement(&mut self) -> Result<Statement, ParseError> {
+        let keyword = self.previous();
+        // We know that there's a value if there's no semicolon (since
+        // expressions can't start with semicolons).
+        let value = if !self.check(&TokenType::Semicolon) {
+            match self.expression() {
+                Ok(expr) => expr,
+                Err(parse_error) => return Err(parse_error),
+            }
+        } else {
+            // If there's no return value, return Nil.
+            Literal::new(TokenLiteral::None)
+        };
+
+        match self.consume(TokenType::Semicolon, "Expect ';' after return value.") {
+            _ => Ok(ReturnStmt::new(keyword, value)),
+            Err(parse_error) => return Err(parse_error),
         }
     }
 

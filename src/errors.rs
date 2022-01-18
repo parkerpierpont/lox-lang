@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
-use crate::{runtime_error::RuntimeError, token::Token};
+use crate::{exceptions::RuntimeException, token::Token};
 
 #[derive(Debug, Clone)]
 
@@ -129,8 +129,16 @@ pub fn error(line: usize, message: impl Into<String>) {
     ERROR_MANAGER.error(line, message.into());
 }
 
-pub fn runtime_error(error: RuntimeError) {
-    ERROR_MANAGER.runtime_error(error.token, error.message);
+pub fn runtime_error(error: RuntimeException) {
+    match error {
+        RuntimeException::RuntimeError(error) => {
+            ERROR_MANAGER.runtime_error(error.token, error.message);
+        }
+        RuntimeException::ReturnException(_) => {
+            // We should be catching all of these.
+            panic!("Unhandled return exception.")
+        }
+    }
 }
 
 pub fn report(line: usize, _where: impl Into<String>, message: impl Into<String>) {

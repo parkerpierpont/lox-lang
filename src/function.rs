@@ -1,23 +1,32 @@
 use std::{rc::Rc, sync::RwLock};
 
 use crate::{
+    exceptions::RuntimeException,
     interpreter::Interpreter,
     object::{CallableLoxObject, LoxNil, LoxObject, LoxObjectBase, PrimitiveLoxObject},
-    runtime_error::RuntimeError,
     stmt::FunStmt,
 };
 
+#[derive(Clone)]
 pub struct LoxNativeCallable {
     pub arity: usize,
-    pub call_fun: fn(&Interpreter, Vec<LoxObject>) -> Result<LoxObject, RuntimeError>,
+    pub call_fun: fn(&Interpreter, Vec<LoxObject>) -> Result<LoxObject, RuntimeException>,
 }
 
 impl LoxNativeCallable {
     pub fn new(
         arity: usize,
-        call_fun: fn(&Interpreter, Vec<LoxObject>) -> Result<LoxObject, RuntimeError>,
+        call_fun: fn(&Interpreter, Vec<LoxObject>) -> Result<LoxObject, RuntimeException>,
     ) -> LoxObject {
         LoxObject(Rc::new(RwLock::new(LoxNativeCallable { arity, call_fun })))
+    }
+}
+
+impl std::fmt::Debug for LoxNativeCallable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoxNativeCallable")
+            .field("arity", &self.arity)
+            .finish()
     }
 }
 
@@ -36,11 +45,12 @@ impl CallableLoxObject for LoxNativeCallable {
         &self,
         interpreter: &Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, RuntimeException> {
         (self.call_fun)(interpreter, arguments)
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct LoxFunction {
     pub declaration: FunStmt,
 }
@@ -69,27 +79,35 @@ impl CallableLoxObject for LoxFunction {
         &self,
         interpreter: &Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
-        let env = interpreter.environment.new_from_globals();
-        env.enter_new_scope();
+    ) -> Result<LoxObject, RuntimeException> {
+        interpreter.environment.enter_function_scope();
+        interpreter.environment.enter_new_scope();
         // This would typically be able to panic, but because we're checking the
         // arity and the arguments beforehand, we're good.
+
         for i in 0..self.declaration.params.len() {
-            env.define(
+            interpreter.environment.define(
                 &self.declaration.params.get(i).unwrap().lexeme,
                 arguments.get(i).unwrap().clone(),
             );
         }
 
-        let env = env.into_env_base();
-        let old_env = interpreter.environment.replace_scope(env);
+        // Execute our function in the correct scope.
+        let execution_result = interpreter.execute_block(&self.declaration.body);
+        // Return to the normal environment's scope.
+        interpreter.environment.exit_function_scope();
 
-        if let Err(runtime_error) = interpreter.execute_block(&self.declaration.body) {
-            return Err(runtime_error);
+        match execution_result {
+            Err(RuntimeException::RuntimeError(err)) => {
+                // There was a runtime error
+                return Err(RuntimeException::RuntimeError(err));
+            }
+            Err(RuntimeException::ReturnException(return_exception)) => {
+                // Early return value emitted
+                return Ok(return_exception.value);
+            }
+            // No return value was emitted
+            _ => Ok(LoxNil::new()),
         }
-
-        interpreter.environment.replace_scope(old_env);
-
-        return Ok(LoxNil::new());
     }
 }

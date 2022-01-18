@@ -1,14 +1,14 @@
-use std::{rc::Rc, sync::RwLock};
+use std::{fmt::Debug, rc::Rc, sync::RwLock};
 
 use downcast::{downcast, Any};
 
 use crate::{
+    exceptions::RuntimeException,
     function::{LoxFunction, LoxNativeCallable},
     interpreter::Interpreter,
-    runtime_error::RuntimeError,
 };
 
-pub trait LoxObjectBase: Any + PrimitiveLoxObject {}
+pub trait LoxObjectBase: Any + PrimitiveLoxObject + Debug {}
 pub trait PrimitiveLoxObject {
     fn instance_name(&self) -> &'static str;
 }
@@ -20,13 +20,13 @@ pub trait CallableLoxObject: Any + LoxObjectBase {
         &self,
         interpreter: &Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError>;
+    ) -> Result<LoxObject, RuntimeException>;
 }
 
 downcast!(dyn LoxObjectBase);
 downcast!(dyn CallableLoxObject);
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LoxObject(pub Rc<RwLock<dyn LoxObjectBase>>);
 
 impl LoxObject {
@@ -129,7 +129,7 @@ impl LoxObject {
         &self,
         interpreter: &Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, RuntimeException> {
         match self.instance_name() {
             "NativeCallable" => {
                 if let Ok(val) = self.0.try_read() {

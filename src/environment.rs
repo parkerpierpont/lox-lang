@@ -1,46 +1,25 @@
-use crate::{object::LoxObject, runtime_error::RuntimeError, token::Token};
-use downcast::{downcast, Any};
+use crate::{
+    exceptions::{RuntimeError, RuntimeException},
+    object::LoxObject,
+    token::Token,
+};
 use std::{collections::HashMap, rc::Rc, sync::RwLock};
 
-pub trait EnvironmentTrait: Any {
+pub trait EnvironmentTrait {
     fn define(&mut self, name: &String, value: LoxObject);
-    fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError>;
-    fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), RuntimeError>;
-    fn is_global(&self) -> bool;
-    fn take_enclosing_scope(self) -> Option<Box<EnvironmentBase>>;
-    fn parent_environment(&self) -> Option<&Environment>;
+    fn get(&self, name: &Token) -> Option<LoxObject>;
+    fn assign(&mut self, name: &Token, value: LoxObject) -> Option<()>;
 }
 
 pub struct EnvironmentBase {
     pub values: HashMap<String, LoxObject>,
-    pub enclosing: Option<Environment>,
 }
-
-downcast!(dyn EnvironmentTrait);
-pub type Environment = Box<dyn EnvironmentTrait>;
 
 impl EnvironmentBase {
     /// Create a new environment.
     pub fn new_global() -> EnvironmentBase {
         Self {
             values: HashMap::new(),
-            enclosing: None,
-        }
-    }
-
-    /// Create a new environment.
-    pub fn new_global_from_hashmap(vals: HashMap<String, LoxObject>) -> EnvironmentBase {
-        Self {
-            values: vals.clone(),
-            enclosing: None,
-        }
-    }
-
-    /// Create a new environment.
-    pub fn new_scoped(enclosing: Environment) -> EnvironmentBase {
-        Self {
-            values: HashMap::new(),
-            enclosing: Some(enclosing),
         }
     }
 }
@@ -59,138 +38,207 @@ impl EnvironmentTrait for EnvironmentBase {
     /// We have to do this at runtime to support lazy references to variables in
     /// functions. We could statically check all of this (I believe) – but it's
     /// too involved for this tutorial.
-    fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
-        match self.values.get(&name.lexeme) {
-            Some(value) => Ok(value.clone()),
-            None => {
-                if let Some(enclosing) = self.enclosing.as_ref() {
-                    return enclosing.get(name);
-                }
-
-                Err(RuntimeError::new(
-                    name.clone(),
-                    format!("Undefined variable '{}'.", name.lexeme),
-                ))
-            }
-        }
+    fn get(&self, name: &Token) -> Option<LoxObject> {
+        self.values.get(&name.lexeme).map(|v| v.clone())
     }
 
     /// Similar to 'get', but this doesn't let you create a new variable. If a
     /// new variable creation is attempted, this will throw a 'RuntimeError'.
-    fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), RuntimeError> {
+    fn assign(&mut self, name: &Token, value: LoxObject) -> Option<()> {
         // If the key exists, replace it with new value.
         if let None = self.values.remove_entry(&name.lexeme) {
-            // If there's no existing entry, but we have a parent scope,
-            // return the result from assign() in the parent scope.
-            if let Some(enclosing) = self.enclosing.as_mut() {
-                return enclosing.assign(name, value);
-            } else {
-                // Otherwise, return a runtime error, since we're reached
-                // the global scope and still haven't found the variable key.
-                return Err(RuntimeError::new(
-                    name.clone(),
-                    format!("Undefined variable '{}'.", name.lexeme),
-                ));
-            }
+            return None;
         }
 
         self.values.insert(name.lexeme.clone(), value);
 
-        Ok(())
+        Some(())
+    }
+}
+
+pub struct EnvironmentStack {
+    inner: Rc<RwLock<Vec<Rc<RwLock<EnvironmentBase>>>>>,
+}
+
+impl EnvironmentStack {
+    pub fn new() -> Self {
+        Self {
+            inner: Rc::new(RwLock::new(vec![Rc::new(RwLock::new(
+                EnvironmentBase::new_global(),
+            ))])),
+        }
     }
 
-    /// Whether we have an enclosing scope or not.
-    fn is_global(&self) -> bool {
-        self.enclosing.is_some()
+    pub fn enter_new_scope(&self) {
+        if let Ok(mut inner) = self.inner.try_write() {
+            inner.push(Rc::new(RwLock::new(EnvironmentBase::new_global())));
+        }
     }
 
-    /// If we do have an enclosing scope, this will get it. Be careful, because
-    /// this will panic if the scope doesn't exist.
-    fn take_enclosing_scope(mut self) -> Option<Box<EnvironmentBase>> {
-        if let Some(env) = self.enclosing.take() {
-            if let Ok(env_base) = env.downcast::<EnvironmentBase>() {
-                return Some(env_base);
+    pub fn exit_scope(&self) {
+        if let Ok(mut inner) = self.inner.try_write() {
+            let len = inner.len();
+            if len > 1 as usize {
+                inner.remove(len - 1);
             }
         }
-        None
     }
 
-    fn parent_environment(&self) -> Option<&Environment> {
-        self.enclosing.as_ref()
+    pub fn define(&self, name: &String, value: LoxObject) {
+        if let Ok(inner) = self.inner.try_read() {
+            let v = inner.last().unwrap();
+            if let Ok(mut v) = v.try_write() {
+                v.define(name, value);
+                return;
+            }
+        }
+
+        panic!("Unable to define new value in [EnvironmentStack::define]");
+    }
+
+    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeException> {
+        let mut ret = None;
+        if let Ok(inner) = self.inner.try_read() {
+            let mut idx = inner.len() - 1;
+            while idx >= 0 as usize && ret.is_none() {
+                let v = inner.get(idx).unwrap();
+                if let Ok(env) = v.try_write() {
+                    match env.get(name) {
+                        Some(value) => {
+                            ret = Some(value);
+                            break;
+                        }
+                        None => {
+                            idx = idx - 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        match ret {
+            Some(obj) => Ok(obj),
+            None => Err(RuntimeError::new(
+                name.clone(),
+                format!("[internal] Unable to get '{}'.", name.lexeme),
+            )),
+        }
+    }
+
+    pub fn assign(&self, name: &Token, value: LoxObject) -> Result<(), RuntimeException> {
+        let mut ret = None;
+        if let Ok(inner) = self.inner.try_read() {
+            let mut idx = inner.len() - 1;
+
+            while idx >= 0 as usize && ret.is_none() {
+                let v = inner.get(idx).unwrap();
+                if let Ok(mut env) = v.try_write() {
+                    match env.assign(name, value.clone()) {
+                        Some(_) => {
+                            ret = Some(());
+                            break;
+                        }
+                        None => {
+                            idx = idx - 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        match ret {
+            Some(_) => Ok(()),
+            None => Err(RuntimeError::new(
+                name.clone(),
+                format!("[internal] Unable to assign '{}'.", name.lexeme),
+            )),
+        }
+    }
+
+    pub fn new_from_current_global(&self) -> Self {
+        let mut ret = None;
+        if let Ok(inner) = self.inner.try_read() {
+            ret = inner.get(0).map(|v| v.clone());
+        }
+
+        if let Some(global) = ret {
+            Self {
+                inner: Rc::new(RwLock::new(vec![global])),
+            }
+        } else {
+            panic!("Unable to construct new EnvironmentStack from current global.")
+        }
     }
 }
 
 pub struct EnvironmentManager {
-    // previous_environment: Rc<RwLock<Option<Environment>>>,
-    pub current_environment: Rc<RwLock<Option<EnvironmentBase>>>,
+    pub environments: Rc<RwLock<Vec<EnvironmentStack>>>,
 }
 
 impl EnvironmentManager {
     /// Create a new environment.
     pub fn new() -> Self {
         Self {
-            // previous_environment: Rc::new(RwLock::new(None)),
-            current_environment: Rc::new(RwLock::new(Some(EnvironmentBase::new_global()))),
+            environments: Rc::new(RwLock::new(vec![EnvironmentStack::new()])),
         }
     }
 
-    fn new_from_existing(environment_tree: &EnvironmentBase) -> Self {
-        Self {
-            // previous_environment: Rc::new(RwLock::new(None)),
-            current_environment: Rc::new(RwLock::new(Some(
-                EnvironmentBase::new_global_from_hashmap(environment_tree.values.clone()),
-            ))),
+    /// Enters a new function scope
+    pub fn enter_function_scope(&self) {
+        if let Ok(mut environments) = self.environments.try_write() {
+            let new_env = environments.get(0).unwrap().new_from_current_global();
+            environments.push(new_env);
+            return;
         }
+
+        panic!("Unable to enter function scope.")
     }
 
-    /// Returns the existing scope, and replaces it with `new_scope`.
-    pub fn replace_scope(&self, new_scope: EnvironmentBase) -> EnvironmentBase {
-        if let Ok(mut current) = self.current_environment.try_write() {
-            let old_env = current.take().unwrap();
-            current.replace(new_scope);
-            return old_env;
+    /// Exits the most recent function scope.
+    pub fn exit_function_scope(&self) {
+        let mut exited = false;
+        if let Ok(mut environments) = self.environments.try_write() {
+            let len = environments.len();
+            if len > 1 {
+                environments.remove(len - 1);
+                exited = true;
+            }
         }
 
-        panic!("Unable to replace current scope.")
-    }
-
-    pub fn into_env_base(self) -> EnvironmentBase {
-        if let Ok(mut current) = self.current_environment.try_write() {
-            return current.take().unwrap();
+        if !exited {
+            panic!("Unable to exit function scope.")
         }
-
-        panic!("Unable to take current environment base.")
     }
 
     pub fn enter_new_scope(&self) {
-        if let Ok(mut current) = self.current_environment.try_write() {
-            let env_trait_obj: Box<dyn EnvironmentTrait> = Box::new(current.take().unwrap());
-            let new_scope = EnvironmentBase::new_scoped(env_trait_obj);
-            current.replace(new_scope);
+        if let Ok(environments) = self.environments.try_read() {
+            if let Some(environment_stack) = environments.last() {
+                environment_stack.enter_new_scope();
+            }
         }
     }
 
     pub fn exit_current_scope(&self) {
-        if let Ok(mut current) = self.current_environment.try_write() {
-            let child_scope = current.take().unwrap();
-            if let Some(parent_scope) = child_scope.take_enclosing_scope() {
-                current.replace(Box::into_inner(parent_scope));
+        if let Ok(environments) = self.environments.try_read() {
+            if let Some(environment_stack) = environments.last() {
+                environment_stack.exit_scope();
             }
         }
     }
 
     pub fn define(&self, name: &String, value: LoxObject) {
-        if let Ok(mut current_environment) = self.current_environment.try_write() {
-            current_environment.as_mut().map(|v| {
-                v.define(name, value);
-            });
+        if let Ok(environments) = self.environments.try_read() {
+            if let Some(environment_stack) = environments.last() {
+                environment_stack.define(name, value);
+            }
         }
     }
 
-    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
-        if let Ok(current_environment) = self.current_environment.try_read() {
-            let env = current_environment.as_ref().unwrap();
-            return env.get(name);
+    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeException> {
+        if let Ok(environments) = self.environments.try_read() {
+            if let Some(environment_stack) = environments.last() {
+                return environment_stack.get(name);
+            }
         }
 
         Err(RuntimeError::new(
@@ -199,10 +247,11 @@ impl EnvironmentManager {
         ))
     }
 
-    pub fn assign(&self, name: &Token, value: LoxObject) -> Result<(), RuntimeError> {
-        if let Ok(mut current_environment) = self.current_environment.try_write() {
-            let curr_env = current_environment.as_mut().unwrap();
-            return curr_env.assign(name, value);
+    pub fn assign(&self, name: &Token, value: LoxObject) -> Result<(), RuntimeException> {
+        if let Ok(environments) = self.environments.try_read() {
+            if let Some(environment_stack) = environments.last() {
+                return environment_stack.assign(name, value);
+            }
         }
 
         Err(RuntimeError::new(
@@ -210,33 +259,4 @@ impl EnvironmentManager {
             format!("[internal] Unable to assign '{}'.", name.lexeme),
         ))
     }
-
-    pub fn new_from_globals(&self) -> EnvironmentManager {
-        if let Ok(environment) = self.current_environment.try_read() {
-            let mut parent_env = environment.as_ref().unwrap();
-            let mut has_parent = parent_env.parent_environment();
-            while has_parent.is_some() {
-                parent_env = has_parent
-                    .unwrap()
-                    .downcast_ref::<EnvironmentBase>()
-                    .unwrap();
-                has_parent = parent_env.parent_environment();
-            }
-
-            return Self::new_from_existing(&parent_env);
-        }
-
-        panic!("Unable to get global environment.")
-    }
-
-    // fn is_global(&self) -> bool {
-    //     let mut is_global = false;
-    //     if let Ok(maybe_current_environment) = self.current_environment.try_read() {
-    //         maybe_current_environment.as_ref().map(|c| {
-    //             is_global = c.is_global();
-    //         });
-    //     }
-
-    //     is_global
-    // }
 }

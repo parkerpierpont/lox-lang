@@ -13,6 +13,7 @@ pub trait StmtVisitor<T> {
     fn visit_if_stmt(&self, stmt: &IfStmt) -> T;
     fn visit_while_stmt(&self, stmt: &WhileStmt) -> T;
     fn visit_fun_stmt(&self, stmt: &FunStmt) -> T;
+    fn visit_return_stmt(&self, stmt: &ReturnStmt) -> T;
 }
 
 pub trait StmtVisitorTarget {
@@ -29,6 +30,7 @@ impl StmtVisitorTarget for Rc<dyn Stmt> {
             "Block" => visitor.visit_block_stmt(self.downcast_ref::<BlockStmt>().unwrap()),
             "While" => visitor.visit_while_stmt(self.downcast_ref::<WhileStmt>().unwrap()),
             "Function" => visitor.visit_fun_stmt(self.downcast_ref::<FunStmt>().unwrap()),
+            "Return" => visitor.visit_return_stmt(self.downcast_ref::<ReturnStmt>().unwrap()),
             _ => unreachable!(),
         }
     }
@@ -168,5 +170,23 @@ impl Stmt for FunStmt {}
 impl Named for FunStmt {
     fn name(&self) -> &'static str {
         "Function"
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ReturnStmt {
+    pub keyword: Token,
+    pub value: Expression,
+}
+
+impl ReturnStmt {
+    pub fn new(keyword: Token, value: Expression) -> Statement {
+        Rc::new(ReturnStmt { keyword, value })
+    }
+}
+impl Stmt for ReturnStmt {}
+impl Named for ReturnStmt {
+    fn name(&self) -> &'static str {
+        "Return"
     }
 }

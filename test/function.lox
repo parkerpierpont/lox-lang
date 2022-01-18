@@ -1,8 +1,25 @@
 //
 // functions
 //
-fun sayHi(first, last) {
-    print "Hi, " + first + " " + last + "!";
-}
+// fun sayHi(first, last) {
+//     print "Hi, " + first + " " + last + "!";
+// }
 
-sayHi("Dear", "Reader");
+// sayHi("Dear", "Reader");
+
+// fun returnSayHello(to) {
+//     return "Hello " + to;
+// }
+
+// print returnSayHello("Return Syntax"); // Hello Return Syntax
+
+var a = "global";
+{
+  fun showA() {
+    print a;
+  }
+
+  showA();
+  var a = "block";
+  showA();
+}

@@ -1,9 +1,9 @@
 use crate::environment::EnvironmentManager;
 use crate::errors;
-use crate::expr::{Expr, ExprVisitor, VisitorTarget};
+use crate::exceptions::{ReturnException, RuntimeError, RuntimeException};
+use crate::expr::{Expr, ExprVisitor, Literal, VisitorTarget};
 use crate::function::{LoxFunction, LoxNativeCallable};
 use crate::object::{LoxBoolean, LoxNil, LoxNumber, LoxObject, LoxString};
-use crate::runtime_error::RuntimeError;
 use crate::stmt::{Statement, StmtVisitor, StmtVisitorTarget};
 use crate::token::{Token, TokenLiteral};
 use crate::token_type::TokenType;
@@ -37,11 +37,11 @@ impl Interpreter {
         }
     }
 
-    pub fn execute(&self, stmt: Statement) -> Result<(), RuntimeError> {
+    pub fn execute(&self, stmt: Statement) -> Result<(), RuntimeException> {
         stmt.accept(self)
     }
 
-    pub fn execute_block(&self, statements: &Vec<Statement>) -> Result<(), RuntimeError> {
+    pub fn execute_block(&self, statements: &Vec<Statement>) -> Result<(), RuntimeException> {
         self.environment.enter_new_scope();
 
         for statement in statements {
@@ -56,7 +56,7 @@ impl Interpreter {
     }
 
     // Sends the expression back through the visitor implementation
-    pub fn evaluate(&self, expr: &Rc<dyn Expr>) -> Result<LoxObject, RuntimeError> {
+    pub fn evaluate(&self, expr: &Rc<dyn Expr>) -> Result<LoxObject, RuntimeException> {
         expr.accept(self)
     }
 
@@ -64,7 +64,7 @@ impl Interpreter {
         &self,
         operator: &Token,
         operand: &'a LoxObject,
-    ) -> Result<&'a LoxObject, RuntimeError> {
+    ) -> Result<&'a LoxObject, RuntimeException> {
         if operand.instance_name() == "Number" {
             Ok(operand)
         } else {
@@ -80,7 +80,7 @@ impl Interpreter {
         operator: &Token,
         operand_a: &'a LoxObject,
         operand_b: &'b LoxObject,
-    ) -> Result<(&'a LoxObject, &'b LoxObject), RuntimeError> {
+    ) -> Result<(&'a LoxObject, &'b LoxObject), RuntimeException> {
         match (
             self.check_number_operand(operator, operand_a),
             self.check_number_operand(operator, operand_b),
@@ -93,8 +93,8 @@ impl Interpreter {
     }
 }
 
-impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
-    fn visit_binary_expr(&self, expr: &crate::expr::Binary) -> Result<LoxObject, RuntimeError> {
+impl ExprVisitor<Result<LoxObject, RuntimeException>> for &Interpreter {
+    fn visit_binary_expr(&self, expr: &crate::expr::Binary) -> Result<LoxObject, RuntimeException> {
         let (left, right) = (self.evaluate(&expr.left), self.evaluate(&expr.right));
         if left.is_err() {
             return left;
@@ -156,11 +156,17 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
         }
     }
 
-    fn visit_grouping_expr(&self, expr: &crate::expr::Grouping) -> Result<LoxObject, RuntimeError> {
+    fn visit_grouping_expr(
+        &self,
+        expr: &crate::expr::Grouping,
+    ) -> Result<LoxObject, RuntimeException> {
         self.evaluate(&expr.expression)
     }
 
-    fn visit_literal_expr(&self, expr: &crate::expr::Literal) -> Result<LoxObject, RuntimeError> {
+    fn visit_literal_expr(
+        &self,
+        expr: &crate::expr::Literal,
+    ) -> Result<LoxObject, RuntimeException> {
         Ok(match &expr.value {
             TokenLiteral::String(value) => LoxString::new(value.clone()),
             TokenLiteral::Number(value) => LoxNumber::new(*value),
@@ -170,7 +176,7 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
         })
     }
 
-    fn visit_unary_expr(&self, expr: &crate::expr::Unary) -> Result<LoxObject, RuntimeError> {
+    fn visit_unary_expr(&self, expr: &crate::expr::Unary) -> Result<LoxObject, RuntimeException> {
         self.evaluate(&expr.right)
             .map(|right| match expr.operator.ty {
                 TokenType::Minus => {
@@ -185,11 +191,14 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
             })
     }
 
-    fn visit_variable_expr(&self, expr: &crate::expr::Variable) -> Result<LoxObject, RuntimeError> {
+    fn visit_variable_expr(
+        &self,
+        expr: &crate::expr::Variable,
+    ) -> Result<LoxObject, RuntimeException> {
         self.environment.get(&expr.name)
     }
 
-    fn visit_assign_expr(&self, expr: &crate::expr::Assign) -> Result<LoxObject, RuntimeError> {
+    fn visit_assign_expr(&self, expr: &crate::expr::Assign) -> Result<LoxObject, RuntimeException> {
         let value = match self.evaluate(&expr.value) {
             Ok(val) => val,
             Err(runtime_error) => return Err(runtime_error),
@@ -202,7 +211,10 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
         return Ok(value);
     }
 
-    fn visit_logical_expr(&self, expr: &crate::expr::Logical) -> Result<LoxObject, RuntimeError> {
+    fn visit_logical_expr(
+        &self,
+        expr: &crate::expr::Logical,
+    ) -> Result<LoxObject, RuntimeException> {
         let left = match self.evaluate(&expr.left) {
             Ok(obj) => obj,
             Err(runtime_error) => return Err(runtime_error),
@@ -225,7 +237,7 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
         self.evaluate(&expr.right)
     }
 
-    fn visit_call_expr(&self, expr: &crate::expr::Call) -> Result<LoxObject, RuntimeError> {
+    fn visit_call_expr(&self, expr: &crate::expr::Call) -> Result<LoxObject, RuntimeException> {
         let callee = match self.evaluate(&expr.callee) {
             Ok(callee_obj) => callee_obj,
             Err(runtime_error) => return Err(runtime_error),
@@ -263,15 +275,15 @@ impl ExprVisitor<Result<LoxObject, RuntimeError>> for &Interpreter {
     }
 }
 
-impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
-    fn visit_expression_stmt(&self, stmt: &crate::stmt::ExprStmt) -> Result<(), RuntimeError> {
+impl StmtVisitor<Result<(), RuntimeException>> for &Interpreter {
+    fn visit_expression_stmt(&self, stmt: &crate::stmt::ExprStmt) -> Result<(), RuntimeException> {
         match self.evaluate(&stmt.expression) {
             Ok(_) => Ok(()),
             Err(runtime_error) => Err(runtime_error),
         }
     }
 
-    fn visit_print_stmt(&self, stmt: &crate::stmt::PrintStmt) -> Result<(), RuntimeError> {
+    fn visit_print_stmt(&self, stmt: &crate::stmt::PrintStmt) -> Result<(), RuntimeException> {
         let value = self.evaluate(&stmt.expression);
         match value {
             Ok(print_value) => {
@@ -282,7 +294,10 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
         }
     }
 
-    fn visit_variable_stmt(&self, stmt: &crate::stmt::VariableStmt) -> Result<(), RuntimeError> {
+    fn visit_variable_stmt(
+        &self,
+        stmt: &crate::stmt::VariableStmt,
+    ) -> Result<(), RuntimeException> {
         let value = match &stmt.initializer {
             // If we have an initializer, we need to evaluate the expression to
             // get the final value.
@@ -301,7 +316,7 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
         Ok(())
     }
 
-    fn visit_block_stmt(&self, stmt: &crate::stmt::BlockStmt) -> Result<(), RuntimeError> {
+    fn visit_block_stmt(&self, stmt: &crate::stmt::BlockStmt) -> Result<(), RuntimeException> {
         if let Err(runtime_error) = self.execute_block(&stmt.statements) {
             return Err(runtime_error);
         }
@@ -309,7 +324,7 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
         Ok(())
     }
 
-    fn visit_if_stmt(&self, stmt: &crate::stmt::IfStmt) -> Result<(), RuntimeError> {
+    fn visit_if_stmt(&self, stmt: &crate::stmt::IfStmt) -> Result<(), RuntimeException> {
         let condition = match self.evaluate(&stmt.condition) {
             Ok(res) => res.is_truthy(),
             Err(runtime_error) => return Err(runtime_error),
@@ -330,7 +345,7 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
         }
     }
 
-    fn visit_while_stmt(&self, stmt: &crate::stmt::WhileStmt) -> Result<(), RuntimeError> {
+    fn visit_while_stmt(&self, stmt: &crate::stmt::WhileStmt) -> Result<(), RuntimeException> {
         while match self.evaluate(&stmt.condition) {
             // This is our evaluation of conditional's truthiness
             Ok(condition) => condition.is_truthy(),
@@ -346,10 +361,40 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
         Ok(())
     }
 
-    fn visit_fun_stmt(&self, stmt: &crate::stmt::FunStmt) -> Result<(), RuntimeError> {
+    fn visit_fun_stmt(&self, stmt: &crate::stmt::FunStmt) -> Result<(), RuntimeException> {
         let function = LoxFunction::new(stmt);
         self.environment.define(&stmt.name.lexeme, function);
         Ok(())
+    }
+
+    fn visit_return_stmt(&self, stmt: &crate::stmt::ReturnStmt) -> Result<(), RuntimeException> {
+        let is_null = stmt.value.name() == "Literal"
+            && stmt.value.clone().downcast_rc::<Literal>().unwrap().value == TokenLiteral::None;
+
+        let value = if !is_null {
+            match self.evaluate(&stmt.value) {
+                // The normal lox object.
+                Ok(lox_obj) => lox_obj,
+                // We have an actual runtime error here.
+                Err(RuntimeException::RuntimeError(err)) => {
+                    return Err(RuntimeException::RuntimeError(err))
+                }
+                // Shouldn't be possible to have a return statement inside of
+                // another return statement.
+                _ => {
+                    return Err(RuntimeError::new(
+                        stmt.keyword.clone(),
+                        "Cannot use nested return values.",
+                    ))
+                }
+            }
+        } else {
+            LoxNil::new()
+        };
+
+        // This is the successful code path, but we have to wrap it with an
+        // exception so we can unwind.
+        Err(ReturnException::new(value))
     }
 }
 
@@ -357,7 +402,7 @@ impl StmtVisitor<Result<(), RuntimeError>> for &Interpreter {
 fn native_clock(
     _interpreter: &Interpreter,
     _args: Vec<LoxObject>,
-) -> Result<LoxObject, RuntimeError> {
+) -> Result<LoxObject, RuntimeException> {
     Ok(LoxNumber::new(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
