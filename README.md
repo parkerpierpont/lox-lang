@@ -5,13 +5,15 @@ A super-naive implementation of Lox from the excellent ["Crafting Interpreters" 
 1. Working safely with Trait objects and downcasting.
 2. Implementing a visitor pattern for expressions, objects, and statements.
 
+This is only to satisfy my own interest in scanning and parsing, mostly – so work on this will be most likely incomplete, and changes will be few-and-far between.
+
 ### Running
 
 Currently, this only runs by pointing the interpreter to a file. You'll need [`cargo`](https://www.rust-lang.org/learn/get-started) installed on your system (rustup will install it for you).
 
 **Example:**
 
-`cd` into the root of the repo, and run:
+`cd` into `./interpreted`, and run:
 
 ```shell
 cargo run -- ./test/function.lox
